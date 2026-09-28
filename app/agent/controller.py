@@ -1,0 +1,116 @@
+"""The agent loop: user message -> Grok -> tool calls -> backend executes -> reply.
+
+Iron rule enforced here: the model never touches the database. It proposes tool
+calls; executor.py runs them against PostgreSQL; only the tool result flowing back
+tells the model whether something actually happened.
+"""
+
+import json
+
+from openai import OpenAI
+from sqlalchemy.orm import Session
+
+from app.agent.executor import execute_tool
+from app.agent.prompts import build_system_prompt
+from app.agent.tool_specs import TOOL_SPECS
+from app.config import AGENT_MAX_TOOL_ROUNDS, GROK_MODEL, XAI_API_KEY, XAI_BASE_URL
+from app.db.models import ConversationLog
+from app.tools.booking import get_default_business
+
+
+class AgentError(Exception):
+    """Raised for setup/API problems the user should see as a clear message."""
+
+
+class AgentController:
+    def __init__(self, db: Session, conversation_id: int | None = None, channel: str = "web_chat"):
+        self.db = db
+        self.business = get_default_business(db)
+        if self.business is None:
+            raise AgentError("no business configured — run scripts/seed_minimal.py first")
+
+        self.conversation = db.get(ConversationLog, conversation_id) if conversation_id else None
+        if self.conversation is None:
+            self.conversation = ConversationLog(business_id=self.business.id, channel=channel, messages=[])
+            db.add(self.conversation)
+            db.commit()
+            db.refresh(self.conversation)
+
+        self.client = OpenAI(api_key=XAI_API_KEY, base_url=XAI_BASE_URL) if XAI_API_KEY else None
+
+    def handle_user_message(self, text: str) -> dict:
+        messages = list(self.conversation.messages or [])
+        system_prompt = build_system_prompt(self.db, self.business)
+        if messages and messages[0].get("role") == "system":
+            messages[0] = {"role": "system", "content": system_prompt}
+        else:
+            messages.insert(0, {"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": text})
+
+        trace: list[dict] = []
+        if self.client is None:
+            reply = "LLM is not configured: set XAI_API_KEY in .env and restart the server."
+        else:
+            try:
+                reply, trace = self._run_loop(messages)
+            except AgentError as e:
+                reply = f"Agent error: {e}"
+
+        self.conversation.messages = messages  # reassign so the JSON column is marked dirty
+        self.db.commit()
+        return {
+            "reply": reply,
+            "conversation_id": self.conversation.id,
+            "tool_trace": trace,
+            "escalated": self.conversation.escalated,
+        }
+
+    def _run_loop(self, messages: list[dict]) -> tuple[str, list[dict]]:
+        trace: list[dict] = []
+        for _ in range(AGENT_MAX_TOOL_ROUNDS):
+            try:
+                response = self.client.chat.completions.create(
+                    model=GROK_MODEL,
+                    messages=messages,
+                    tools=TOOL_SPECS,
+                    tool_choice="auto",
+                    temperature=0.4,
+                    max_tokens=700,
+                )
+            except Exception as e:
+                raise AgentError(f"Grok API call failed: {e}") from e
+
+            message = response.choices[0].message
+            if not message.tool_calls:
+                reply = message.content or "(empty response)"
+                messages.append({"role": "assistant", "content": reply})
+                return reply, trace
+
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": message.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                        }
+                        for tc in message.tool_calls
+                    ],
+                }
+            )
+            for tc in message.tool_calls:
+                result, summary = execute_tool(
+                    self.db, tc.function.name, tc.function.arguments,
+                    self.business.id, self.conversation.id,
+                )
+                trace.append({"tool": tc.function.name, "summary": summary, "ok": bool(result.get("success"))})
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps(result, ensure_ascii=False, default=str),
+                    }
+                )
+        return "Sorry, I couldn't complete that. Please try again or call the clinic directly.", trace
