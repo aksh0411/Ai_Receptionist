@@ -30,4 +30,11 @@
 - Smoke test now state-adaptive (picks the first free slot) + asserts lookups; 7/7 passing.
 - Live-verified: "cancel my appointment tomorrow" → asks phone → finds SD-9A73 → confirms → cancelled (checked in DB); greeting flow greeted Rahul by name and noted nothing upcoming.
 
-**Next:** eval harness (60–80 scenarios) → fine-tune Qwen3-8B on logged conversations → WhatsApp → voice.
+## 2026-09-30 — v0.2: JSON store (Postgres disconnected) + 3 chat fixes
+
+- All data moved to `data/clinic.json` (readable, hand-editable, delete = factory reset). SQLAlchemy/psycopg removed; `app/db/json_store.py` is the new authority (locked + atomic writes). Same tool behavior, same smoke tests — 8/8 passing.
+- Fixed the 3 failures from the user's pasted chat: (1) `alternatives` now sorted by PROXIMITY to the requested time (asked 11 PM -> 7:30 PM first, not 9:00 AM); (2) all human-facing times have AM/PM `*_display` twins; (3) prompt now forbids suggesting any time before check_availability runs, and requires the full windows picture instead of a partial list.
+- Replayed the exact failing conversation ("tooth filling on 3rd Oct at 8 pm"): agent now checks first, offers 7:00 PM down to 5:00 PM, states "9:00 AM-1:00 PM and 4:00 PM-8:00 PM", books correctly (SD-6146 verified inside clinic.json).
+- Booking, greeting, and lookup flows re-verified live.
+
+**Next:** eval harness (60-80 scenarios) -> fine-tune Qwen3-8B on logged conversations -> WhatsApp -> voice.

@@ -1,27 +1,31 @@
-# FrontDesk AI — v0.1 skeleton
+# FrontDesk AI — v0.2 (JSON store)
 
 AI receptionist backend for a dental clinic: **any OpenAI-compatible LLM as the brain
-(Groq-hosted Qwen by default), PostgreSQL as the authority**. The model proposes actions
-through tool calls; the backend executes them against the database. A booking only
-exists after its DB commit returns a booking reference.
+(Groq-hosted Qwen by default), a human-readable JSON store as the authority**. The model
+proposes actions through tool calls; the backend executes them. A booking only exists
+after the store save returns a booking reference.
+
+**No database needed.** All data lives in `data/clinic.json` — open it to watch bookings
+appear, hand-edit it while the server is stopped, or delete it to factory-reset.
+PostgreSQL returns when the product goes multi-user (the tool layer hides the storage).
 
 ## Layout
 
 ```
 app/
   config.py            # env-driven settings
-  main.py              # FastAPI app (creates tables on startup)
-  db/                  # engine + SQLAlchemy models (10 tables)
-  tools/booking.py     # check_availability, book, cancel, reschedule, info, escalate
+  main.py              # FastAPI app (loads/seeds the JSON store on startup)
+  db/json_store.py     # THE store: locked, atomic writes, seed definitions
+  tools/booking.py     # check_availability, book, cancel, reschedule, lookups, info, escalate
   agent/
     tool_specs.py      # tool schemas the model sees
-    prompts.py         # system prompt built from live DB data
+    prompts.py         # system prompt built from live store data
     executor.py        # runs tool calls, logs every attempt
-    controller.py      # the agent loop (Grok <-> tools)
+    controller.py      # the agent loop (LLM <-> tools)
   channels/chat.py     # POST /chat
   static/chat.html     # test page
 scripts/
-  seed_minimal.py      # one minimal clinic (re-runnable)
+  seed_minimal.py      # seeds data/clinic.json if missing (idempotent)
   smoke_test.py        # full booking-stack test, no LLM needed
 ```
 
@@ -47,9 +51,10 @@ swapping is one .env edit, no code change.
 
 ## Notes
 
-- Every conversation is stored in `conversation_logs`, every tool attempt in
-  `tool_call_logs` — these are the future fine-tuning dataset and eval inputs.
-- The DB blocks double-booking at the schema level (partial unique index on active
-  bookings per staff/slot), and `book_appointment` re-validates the slot right before
-  committing.
-- The Grok account needs credits before the agent will answer (console.x.ai).
+- Every conversation is stored in the JSON store (`conversations`, `tool_calls`) — these
+  are the future fine-tuning dataset and eval inputs.
+- The double-booking guard is enforced in code (slot re-validation right before save;
+  one active booking per staff/slot is checked against live data every time).
+- Times: tools return 24h values plus AM/PM `*_display` fields; the prompt makes the
+  model show customers AM/PM only.
+- The LLM account needs a valid key with quota before the agent will answer.

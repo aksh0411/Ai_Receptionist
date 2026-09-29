@@ -1,6 +1,9 @@
 # secrets — never commit
 .env
 
+# live data store (runtime state; delete to factory-reset)
+data/
+
 # python
 __pycache__/
 *.pyc

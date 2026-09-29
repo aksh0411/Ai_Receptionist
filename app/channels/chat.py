@@ -1,9 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 from app.agent.controller import AgentController, AgentError
-from app.db.base import get_db
 
 router = APIRouter()
 
@@ -14,9 +12,9 @@ class ChatIn(BaseModel):
 
 
 @router.post("/chat")
-def chat(payload: ChatIn, db: Session = Depends(get_db)):
+def chat(payload: ChatIn):
     try:
-        controller = AgentController(db, conversation_id=payload.conversation_id)
+        controller = AgentController(conversation_id=payload.conversation_id)
         return controller.handle_user_message(payload.message.strip())
     except AgentError as e:
         return {

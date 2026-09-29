@@ -5,14 +5,14 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 
 from app.channels.chat import router as chat_router
-from app.db.base import Base, engine
+from app.db import json_store as store
 
 CHAT_PAGE = Path(__file__).parent / "static" / "chat.html"
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Base.metadata.create_all(bind=engine)  # dev-mode schema sync; Alembic comes later
+    store.init()  # loads data/clinic.json or seeds it — no database needed
     yield
 
 
@@ -27,4 +27,4 @@ def index():
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "store": str(store.DATA_FILE)}

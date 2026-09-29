@@ -1,17 +1,15 @@
 """Executes tool calls requested by the model and audits every attempt.
 
 The model's JSON arguments are parsed, dispatched to the real function, and the
-outcome (success or failure) is persisted to tool_call_logs — this is the trail
-you later mine for evals and fine-tuning data.
+outcome (success or failure) is persisted to the store — this is the trail you
+later mine for evals and fine-tuning data.
 """
 
 import inspect
 import json
 import time
 
-from sqlalchemy.orm import Session
-
-from app.db.models import ToolCallLog
+from app.db import json_store as store
 from app.tools import booking
 
 TOOL_FUNCS = {
@@ -27,7 +25,6 @@ TOOL_FUNCS = {
 
 
 def execute_tool(
-    db: Session,
     name: str,
     arguments_json: str,
     business_id: int,
@@ -55,27 +52,23 @@ def execute_tool(
                 for key in ("business_id", "conversation_id"):
                     if key in params:
                         kwargs[key] = business_id if key == "business_id" else conversation_id
-                result = func(db, **kwargs)
+                result = func(**kwargs)
             except TypeError as e:
                 result = {"success": False, "error": f"bad arguments for {name}: {e}"}
             except Exception as e:  # tool bugs must not kill the conversation
-                db.rollback()
                 result = {"success": False, "error": f"{type(e).__name__}: {e}"}
 
     ok = bool(result.get("success"))
     latency_ms = int((time.perf_counter() - started) * 1000)
-    db.add(
-        ToolCallLog(
-            conversation_id=conversation_id,
-            tool_name=name,
-            arguments=args or {},
-            result=result,
-            success=ok,
-            error=None if ok else result.get("error"),
-            latency_ms=latency_ms,
-        )
+    store.add_tool_call(
+        conversation_id=conversation_id,
+        tool_name=name,
+        arguments=args or {},
+        result=result,
+        success=ok,
+        error=None if ok else result.get("error"),
+        latency_ms=latency_ms,
     )
-    db.commit()
     return result, _summarize(name, args or {}, result)
 
 

@@ -1,21 +1,19 @@
-"""The agent loop: user message -> Grok -> tool calls -> backend executes -> reply.
+"""The agent loop: user message -> LLM -> tool calls -> backend executes -> reply.
 
-Iron rule enforced here: the model never touches the database. It proposes tool
-calls; executor.py runs them against PostgreSQL; only the tool result flowing back
-tells the model whether something actually happened.
+Iron rule enforced here: the model never touches the data store. It proposes tool
+calls; executor.py runs them against the JSON store; only the tool result flowing
+back tells the model whether something actually happened.
 """
 
 import json
 
 from openai import OpenAI
-from sqlalchemy.orm import Session
 
 from app.agent.executor import execute_tool
 from app.agent.prompts import build_system_prompt
 from app.agent.tool_specs import TOOL_SPECS
 from app.config import AGENT_MAX_TOOL_ROUNDS, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
-from app.db.models import ConversationLog
-from app.tools.booking import get_default_business
+from app.db import json_store as store
 
 
 class AgentError(Exception):
@@ -23,24 +21,20 @@ class AgentError(Exception):
 
 
 class AgentController:
-    def __init__(self, db: Session, conversation_id: int | None = None, channel: str = "web_chat"):
-        self.db = db
-        self.business = get_default_business(db)
+    def __init__(self, conversation_id: int | None = None, channel: str = "web_chat"):
+        self.business = store.get_business()
         if self.business is None:
             raise AgentError("no business configured — run scripts/seed_minimal.py first")
 
-        self.conversation = db.get(ConversationLog, conversation_id) if conversation_id else None
+        self.conversation = store.get_conversation(conversation_id) if conversation_id else None
         if self.conversation is None:
-            self.conversation = ConversationLog(business_id=self.business.id, channel=channel, messages=[])
-            db.add(self.conversation)
-            db.commit()
-            db.refresh(self.conversation)
+            self.conversation = store.create_conversation(self.business["id"], channel)
 
         self.client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL) if LLM_API_KEY else None
 
     def handle_user_message(self, text: str) -> dict:
-        messages = list(self.conversation.messages or [])
-        system_prompt = build_system_prompt(self.db, self.business)
+        messages = list(self.conversation["messages"] or [])
+        system_prompt = build_system_prompt(self.business)
         if messages and messages[0].get("role") == "system":
             messages[0] = {"role": "system", "content": system_prompt}
         else:
@@ -49,20 +43,20 @@ class AgentController:
 
         trace: list[dict] = []
         if self.client is None:
-            reply = "LLM is not configured: set XAI_API_KEY in .env and restart the server."
+            reply = "LLM is not configured: set LLM_API_KEY in .env and restart the server."
         else:
             try:
                 reply, trace = self._run_loop(messages)
             except AgentError as e:
                 reply = f"Agent error: {e}"
 
-        self.conversation.messages = messages  # reassign so the JSON column is marked dirty
-        self.db.commit()
+        self.conversation["messages"] = messages
+        store.save_conversation(self.conversation)
         return {
             "reply": reply,
-            "conversation_id": self.conversation.id,
+            "conversation_id": self.conversation["id"],
             "tool_trace": trace,
-            "escalated": self.conversation.escalated,
+            "escalated": self.conversation["escalated"],
         }
 
     def _run_loop(self, messages: list[dict]) -> tuple[str, list[dict]]:
@@ -102,8 +96,8 @@ class AgentController:
             )
             for tc in message.tool_calls:
                 result, summary = execute_tool(
-                    self.db, tc.function.name, tc.function.arguments,
-                    self.business.id, self.conversation.id,
+                    tc.function.name, tc.function.arguments,
+                    self.business["id"], self.conversation["id"],
                 )
                 trace.append({"tool": tc.function.name, "summary": summary, "ok": bool(result.get("success"))})
                 messages.append(
