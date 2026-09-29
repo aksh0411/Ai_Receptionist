@@ -37,4 +37,12 @@
 - Replayed the exact failing conversation ("tooth filling on 3rd Oct at 8 pm"): agent now checks first, offers 7:00 PM down to 5:00 PM, states "9:00 AM-1:00 PM and 4:00 PM-8:00 PM", books correctly (SD-6146 verified inside clinic.json).
 - Booking, greeting, and lookup flows re-verified live.
 
+## 2026-09-30 — Provider switched: Groq -> Gemini
+
+- New Google key in `.env`: `LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/`, model `gemini-flash-lite-latest`.
+- Discovery: `gemini-2.5-flash` is retired for new accounts; `gemini-3.8-flash` exists but was at capacity (503) + the free tier allows only ~5 requests/min per model; flash-lite has its own quota bucket and worked.
+- Code fix (provider-agnostic): Gemini 3.x requires its `thought_signature` (returned in `extra_content`) to be echoed back when replaying assistant tool-call messages — the controller now preserves provider extras via `model_extra`. Without this, every tool call 400s on the second round.
+- Live-verified end-to-end on Gemini: availability check -> booking -> reference SD-38AE in the JSON store.
+- Behavior note: Gemini booked without an extra confirmation turn when all details came in one message (Qwen asked first) — prompt-adherence difference to watch in evals.
+
 **Next:** eval harness (60-80 scenarios) -> fine-tune Qwen3-8B on logged conversations -> WhatsApp -> voice.
