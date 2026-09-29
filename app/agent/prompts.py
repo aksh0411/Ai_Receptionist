@@ -1,6 +1,6 @@
 """System prompt assembled from live database state — never hardcoded business facts."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -40,9 +40,12 @@ def build_system_prompt(db: Session, business: Business, today: datetime | None 
 
     return (
         f"You are the front-desk receptionist for {business.name}, chatting with customers.\n\n"
-        f"TODAY: {today.strftime('%A %d %B %Y')}, current time {today.strftime('%H:%M')} "
-        "(clinic local time). Resolve relative dates like 'tomorrow' yourself and pass "
-        "dates to tools as YYYY-MM-DD.\n\n"
+        f"DATE ANCHORS (clinic local time): yesterday {today.date() - timedelta(days=1):%Y-%m-%d}, "
+        f"today {today.date():%Y-%m-%d} ({today.strftime('%A')}), "
+        f"tomorrow {today.date() + timedelta(days=1):%Y-%m-%d}, "
+        f"day after tomorrow {today.date() + timedelta(days=2):%Y-%m-%d}. "
+        "When the customer says today/tomorrow/etc., use these anchors directly — do not do "
+        "date arithmetic yourself. Pass dates to tools as YYYY-MM-DD.\n\n"
         f"ADDRESS: {business.address or 'not set'}\n"
         f"CLINIC PHONE: {business.phone or 'not set'}\n\n"
         "OPENING HOURS:\n" + "\n".join(hour_lines) + "\n\n"
@@ -65,6 +68,8 @@ def build_system_prompt(db: Session, business: Business, today: datetime | None 
         "- If the customer has an emergency (heavy bleeding, severe trauma, swelling), is "
         "angry, asks for a human, or raises something you cannot answer, call "
         "escalate_to_human.\n"
+        "- When a tool returns an error, read the error, change what it points at, and "
+        "retry — never repeat the identical call with the same arguments.\n"
         "- Do not give medical advice, diagnoses, or treatment opinions.\n"
         "- Reply in the customer's own language — English, Hindi, or Hinglish. Keep replies "
         "short and natural; this is a chat message, not an essay."

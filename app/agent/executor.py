@@ -5,6 +5,7 @@ outcome (success or failure) is persisted to tool_call_logs — this is the trai
 you later mine for evals and fine-tuning data.
 """
 
+import inspect
 import json
 import time
 
@@ -45,7 +46,14 @@ def execute_tool(
             result = {"success": False, "error": f"unknown tool '{name}'"}
         else:
             try:
-                result = func(db, business_id=business_id, conversation_id=conversation_id, **args)
+                # Context keys are injected only into tools that declare them;
+                # the model's own arguments are always passed through.
+                kwargs = dict(args)
+                params = inspect.signature(func).parameters
+                for key in ("business_id", "conversation_id"):
+                    if key in params:
+                        kwargs[key] = business_id if key == "business_id" else conversation_id
+                result = func(db, **kwargs)
             except TypeError as e:
                 result = {"success": False, "error": f"bad arguments for {name}: {e}"}
             except Exception as e:  # tool bugs must not kill the conversation

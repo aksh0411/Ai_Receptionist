@@ -1,8 +1,9 @@
 # FrontDesk AI — v0.1 skeleton
 
-AI receptionist backend for a dental clinic: **Grok (xAI) as the brain, PostgreSQL as the
-authority**. The model proposes actions through tool calls; the backend executes them
-against the database. A booking only exists after its DB commit returns a booking reference.
+AI receptionist backend for a dental clinic: **any OpenAI-compatible LLM as the brain
+(Groq-hosted Qwen by default), PostgreSQL as the authority**. The model proposes actions
+through tool calls; the backend executes them against the database. A booking only
+exists after its DB commit returns a booking reference.
 
 ## Layout
 
@@ -35,8 +36,9 @@ python scripts/seed_minimal.py          # once
 
 Then open http://127.0.0.1:8000 — chat page. API: `POST /chat {"message": "...", "conversation_id": null}`.
 
-`.env` holds `DATABASE_URL`, `XAI_API_KEY`, `GROK_MODEL` (any OpenAI-compatible model id
-works — swap Grok for a served Qwen adapter later by changing this one file).
+`.env` holds `DATABASE_URL`, `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL` — any
+OpenAI-compatible provider works (Groq, xAI, OpenAI, or a locally served model);
+swapping is one .env edit, no code change.
 
 ## Notes
 

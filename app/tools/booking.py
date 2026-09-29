@@ -9,7 +9,7 @@ database. A booking is only "confirmed" after its COMMIT succeeds here.
 """
 
 import secrets
-from datetime import date, datetime, time, timedelta
+from datetime import date as date_cls, datetime, time, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -36,6 +36,17 @@ DEFAULT_RULES = {
 }
 
 WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def _date_anchor_error(date_str: str, now: datetime) -> dict:
+    """Error payload that lets the model self-correct a bad date immediately."""
+    return {
+        "success": False,
+        "error": (
+            f"invalid date '{date_str}'. Today is {now.date().isoformat()}; "
+            f"tomorrow is {(now.date() + timedelta(days=1)).isoformat()}."
+        ),
+    }
 
 
 def get_default_business(db: Session) -> Business | None:
@@ -67,7 +78,7 @@ def _find_service(db: Session, business_id: int, name: str) -> Service | None:
     return None
 
 
-def _hours_for_date(db: Session, business_id: int, d: date) -> list[tuple[time, time]]:
+def _hours_for_date(db: Session, business_id: int, d: date_cls) -> list[tuple[time, time]]:
     windows = db.scalars(
         select(BusinessHour).where(
             BusinessHour.business_id == business_id,
@@ -96,7 +107,7 @@ def _booked_intervals(
     db: Session,
     business_id: int,
     staff_ids: list[int],
-    d: date,
+    d: date_cls,
     exclude_appointment_id: int | None = None,
 ) -> dict[int, list[tuple[datetime, datetime]]]:
     """Active appointments on date d per staff id, padded by buffer minutes."""
@@ -125,7 +136,7 @@ def _booked_intervals(
 
 
 def _compute_slots(
-    db: Session, business_id: int, service: Service, d: date
+    db: Session, business_id: int, service: Service, d: date_cls
 ) -> list[datetime]:
     """All start times on date d where the service fits opening hours AND at least
     one assigned staff member is free."""
@@ -154,15 +165,15 @@ def check_availability(
     db: Session,
     business_id: int,
     service_name: str,
-    date_str: str,
+    date: str,
     preferred_time: str | None = None,
     now: datetime | None = None,
 ) -> dict:
     now = now or datetime.now()
     try:
-        d = date.fromisoformat(date_str)
+        d = date_cls.fromisoformat(date)
     except ValueError:
-        return {"success": False, "error": "date must be in YYYY-MM-DD format"}
+        return _date_anchor_error(date, now)
 
     service = _find_service(db, business_id, service_name)
     if not service:
@@ -192,7 +203,7 @@ def check_availability(
     payload = {
         "success": True,
         "service": service.name,
-        "date": date_str,
+        "date": date,
         "open": True,
         "duration_minutes": service.duration_minutes,
         "price_inr": service.price_inr,
@@ -223,7 +234,7 @@ def book_appointment(
     db: Session,
     business_id: int,
     service_name: str,
-    date_str: str,
+    date: str,
     start_time: str,
     customer_name: str,
     customer_phone: str,
@@ -232,10 +243,10 @@ def book_appointment(
 ) -> dict:
     now = now or datetime.now()
     try:
-        d = date.fromisoformat(date_str)
+        d = date_cls.fromisoformat(date)
         start = datetime.combine(d, datetime.strptime(start_time, "%H:%M").time())
-    except ValueError as e:
-        return {"success": False, "error": f"invalid date/time ({e}); need YYYY-MM-DD and HH:MM"}
+    except ValueError:
+        return _date_anchor_error(date, now)
 
     service = _find_service(db, business_id, service_name)
     if not service:
@@ -338,10 +349,10 @@ def reschedule_appointment(
 ) -> dict:
     now = now or datetime.now()
     try:
-        d = date.fromisoformat(new_date)
+        d = date_cls.fromisoformat(new_date)
         start = datetime.combine(d, datetime.strptime(new_time, "%H:%M").time())
-    except ValueError as e:
-        return {"success": False, "error": f"invalid date/time ({e}); need YYYY-MM-DD and HH:MM"}
+    except ValueError:
+        return _date_anchor_error(new_date, now)
 
     appointment = db.scalar(
         select(Appointment).where(

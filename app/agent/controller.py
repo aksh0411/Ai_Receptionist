@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.agent.executor import execute_tool
 from app.agent.prompts import build_system_prompt
 from app.agent.tool_specs import TOOL_SPECS
-from app.config import AGENT_MAX_TOOL_ROUNDS, GROK_MODEL, XAI_API_KEY, XAI_BASE_URL
+from app.config import AGENT_MAX_TOOL_ROUNDS, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 from app.db.models import ConversationLog
 from app.tools.booking import get_default_business
 
@@ -36,7 +36,7 @@ class AgentController:
             db.commit()
             db.refresh(self.conversation)
 
-        self.client = OpenAI(api_key=XAI_API_KEY, base_url=XAI_BASE_URL) if XAI_API_KEY else None
+        self.client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL) if LLM_API_KEY else None
 
     def handle_user_message(self, text: str) -> dict:
         messages = list(self.conversation.messages or [])
@@ -70,7 +70,7 @@ class AgentController:
         for _ in range(AGENT_MAX_TOOL_ROUNDS):
             try:
                 response = self.client.chat.completions.create(
-                    model=GROK_MODEL,
+                    model=LLM_MODEL,
                     messages=messages,
                     tools=TOOL_SPECS,
                     tool_choice="auto",
@@ -78,7 +78,7 @@ class AgentController:
                     max_tokens=700,
                 )
             except Exception as e:
-                raise AgentError(f"Grok API call failed: {e}") from e
+                raise AgentError(f"LLM API call failed: {e}") from e
 
             message = response.choices[0].message
             if not message.tool_calls:
