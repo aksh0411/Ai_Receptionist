@@ -1,7 +1,7 @@
 # FrontDesk AI — v0.2 (JSON store)
 
 AI receptionist backend for a dental clinic: **any OpenAI-compatible LLM as the brain
-(Groq-hosted Qwen by default), a human-readable JSON store as the authority**. The model
+(currently Gemini flash-lite via .env), a human-readable JSON store as the authority**. The model
 proposes actions through tool calls; the backend executes them. A booking only exists
 after the store save returns a booking reference.
 
@@ -45,9 +45,10 @@ python scripts/seed_minimal.py          # once
 
 Then open http://127.0.0.1:8000 — chat page. API: `POST /chat {"message": "...", "conversation_id": null}`.
 
-`.env` holds `DATABASE_URL`, `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL` — any
-OpenAI-compatible provider works (Groq, xAI, OpenAI, or a locally served model);
-swapping is one .env edit, no code change.
+`.env` holds `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL` — any
+OpenAI-compatible provider works (Gemini, Groq, xAI, OpenAI, or a locally served model);
+swapping is one .env edit, no code change. See [`CHAT_LOGIC.md`](CHAT_LOGIC.md) for how the
+chat agent works: message flow, tools, and the constraints it operates under.
 
 ## Notes
 
