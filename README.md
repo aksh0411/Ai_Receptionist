@@ -27,6 +27,11 @@ scripts/
 
 ## Run it
 
+Double-click **`run.bat`** — it creates the venv, installs dependencies, seeds the
+clinic (once), opens the browser, and starts the server.
+
+Or manually:
+
 ```bash
 python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt

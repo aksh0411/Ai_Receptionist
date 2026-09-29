@@ -21,4 +21,13 @@
 
 **Run:** `.venv/Scripts/python -m uvicorn app.main:app --reload` → http://127.0.0.1:8000
 
+## 2026-09-30 — Realism upgrades + one-click run.bat
+
+- New tools: `lookup_appointments(phone)` and `lookup_customer(phone)` — customers can now cancel/reschedule without knowing a booking reference, and returning patients get greeted by name. Phone numbers normalized (digits, last 10) everywhere, so `+91 98765 01234` = `9876501234`.
+- Prompts updated for both flows (ask for phone → look up → confirm exact appointment → act).
+- "New conversation" button on the test page.
+- `run.bat`: double-click → installs deps, seeds (once), opens browser, starts server.
+- Smoke test now state-adaptive (picks the first free slot) + asserts lookups; 7/7 passing.
+- Live-verified: "cancel my appointment tomorrow" → asks phone → finds SD-9A73 → confirms → cancelled (checked in DB); greeting flow greeted Rahul by name and noted nothing upcoming.
+
 **Next:** eval harness (60–80 scenarios) → fine-tune Qwen3-8B on logged conversations → WhatsApp → voice.

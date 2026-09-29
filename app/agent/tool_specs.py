@@ -81,6 +81,43 @@ TOOL_SPECS = [
     {
         "type": "function",
         "function": {
+            "name": "lookup_appointments",
+            "description": (
+                "Find a customer's active appointments by phone number. Use when a "
+                "customer wants to cancel or reschedule but doesn't know their booking "
+                "reference. Returns the customer and their booked appointments."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "phone": {"type": "string", "description": "customer phone, any format"},
+                },
+                "required": ["phone"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "lookup_customer",
+            "description": (
+                "Look up a customer's profile and appointments by phone number. Use it "
+                "to greet returning patients personally and check whether they have "
+                "anything coming up. Ask for the phone number if the customer only "
+                "gave a name."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "phone": {"type": "string", "description": "customer phone, any format"},
+                },
+                "required": ["phone"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_business_info",
             "description": (
                 "Look up clinic facts: opening hours, services with prices, or booking "

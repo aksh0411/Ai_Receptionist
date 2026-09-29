@@ -16,9 +16,14 @@
     display: flex; justify-content: center; height: 100vh;
   }
   .wrap { width: min(720px, 100%); display: flex; flex-direction: column; padding: 16px; }
-  header { display: flex; align-items: baseline; gap: 10px; padding: 4px 4px 14px; }
+  header { display: flex; align-items: center; gap: 10px; padding: 4px 4px 14px; }
   header h1 { font-size: 17px; margin: 0; }
   header span { color: var(--muted); font-size: 12.5px; }
+  #newchat {
+    margin-left: auto; background: none; border: 1px solid var(--line); color: var(--muted);
+    border-radius: 8px; padding: 4px 12px; font-size: 12.5px; cursor: pointer;
+  }
+  #newchat:hover { border-color: var(--accent); color: var(--accent); }
   #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; }
   .msg { max-width: 82%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; }
   .user { align-self: flex-end; background: var(--user); color: #fff; border-bottom-right-radius: 4px; }
@@ -46,7 +51,7 @@
 </head>
 <body>
 <div class="wrap">
-  <header><h1>FrontDesk AI</h1><span id="cid">new conversation</span></header>
+  <header><h1>FrontDesk AI</h1><span id="cid">new conversation</span><button id="newchat">+ New</button></header>
   <div id="log"></div>
   <div id="inputrow">
     <input id="input" placeholder="Try: book a consultation tomorrow at 5pm…" autocomplete="off" />
@@ -114,6 +119,12 @@
 
   send.addEventListener("click", sendMsg);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") sendMsg(); });
+  document.getElementById("newchat").addEventListener("click", () => {
+    conversationId = null;
+    cidLabel.textContent = "new conversation";
+    log.innerHTML = "";
+    input.focus();
+  });
   input.focus();
 </script>
 </body>

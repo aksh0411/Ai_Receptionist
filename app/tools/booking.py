@@ -11,7 +11,7 @@ database. A booking is only "confirmed" after its COMMIT succeeds here.
 import secrets
 from datetime import date as date_cls, datetime, time, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -46,6 +46,102 @@ def _date_anchor_error(date_str: str, now: datetime) -> dict:
             f"invalid date '{date_str}'. Today is {now.date().isoformat()}; "
             f"tomorrow is {(now.date() + timedelta(days=1)).isoformat()}."
         ),
+    }
+
+
+def _normalize_phone(raw: str) -> str:
+    """Indian-mobile normalization: digits only, last 10, so '+91 98765 01234' and
+    '9876501234' are the same customer."""
+    digits = "".join(ch for ch in (raw or "") if ch.isdigit())
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def _customer_by_phone(db: Session, business_id: int, phone: str) -> Customer | None:
+    digits = _normalize_phone(phone)
+    if len(digits) < 10:
+        return None
+    return db.scalar(
+        select(Customer).where(
+            Customer.business_id == business_id,
+            func.regexp_replace(Customer.phone, r"\D", "", "g").like(f"%{digits}"),
+        )
+    )
+
+
+def _appointments_for_customer(
+    db: Session, business_id: int, customer_id: int, now: datetime
+) -> list[dict]:
+    appointments = db.scalars(
+        select(Appointment)
+        .where(
+            Appointment.business_id == business_id,
+            Appointment.customer_id == customer_id,
+            Appointment.status == "booked",
+        )
+        .order_by(Appointment.start_at)
+    ).all()
+    out = []
+    for a in appointments:
+        service = db.get(Service, a.service_id)
+        staff = db.get(Staff, a.staff_id)
+        out.append(
+            {
+                "booking_reference": a.booking_reference,
+                "service": service.name,
+                "staff": staff.name,
+                "date": a.start_at.strftime("%Y-%m-%d"),
+                "time": a.start_at.strftime("%H:%M"),
+                "status": a.status,
+                "is_past": a.start_at < now,
+            }
+        )
+    return out
+
+
+def lookup_appointments(db: Session, business_id: int, phone: str) -> dict:
+    """Find a customer's active appointments by phone — lets customers cancel or
+    reschedule without knowing their booking reference."""
+    customer = _customer_by_phone(db, business_id, phone)
+    if not customer:
+        return {
+            "success": True,
+            "customer": None,
+            "appointments": [],
+            "message": "No customer found with that phone number.",
+        }
+    appointments = _appointments_for_customer(db, business_id, customer.id, datetime.now())
+    return {
+        "success": True,
+        "customer": {"name": customer.name, "phone": customer.phone},
+        "appointments": appointments,
+        "message": (
+            f"{len(appointments)} active appointment(s) for {customer.name}."
+            if appointments
+            else f"Found {customer.name}, but no active appointments."
+        ),
+    }
+
+
+def lookup_customer(db: Session, business_id: int, phone: str) -> dict:
+    """Customer profile + appointments, for greeting returning patients."""
+    customer = _customer_by_phone(db, business_id, phone)
+    if not customer:
+        return {
+            "success": True,
+            "customer": None,
+            "message": "No customer found with that phone number.",
+        }
+    appointments = _appointments_for_customer(db, business_id, customer.id, datetime.now())
+    return {
+        "success": True,
+        "customer": {
+            "name": customer.name,
+            "phone": customer.phone,
+            "email": customer.email,
+            "notes": customer.notes,
+            "first_seen": customer.created_at.strftime("%Y-%m-%d") if customer.created_at else None,
+        },
+        "appointments": appointments,
     }
 
 
@@ -282,12 +378,12 @@ def book_appointment(
             "suggestion": "call check_availability again and offer alternatives",
         }
 
-    phone = customer_phone.strip()
-    customer = db.scalar(
-        select(Customer).where(Customer.business_id == business_id, Customer.phone == phone)
-    )
+    digits = _normalize_phone(customer_phone)
+    if len(digits) < 10:
+        return {"success": False, "error": "customer_phone looks invalid — need a 10-digit number"}
+    customer = _customer_by_phone(db, business_id, digits)
     if not customer:
-        customer = Customer(business_id=business_id, name=customer_name.strip(), phone=phone)
+        customer = Customer(business_id=business_id, name=customer_name.strip(), phone=digits)
         db.add(customer)
         db.flush()
 

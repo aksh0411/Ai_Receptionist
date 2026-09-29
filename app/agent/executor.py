@@ -20,6 +20,8 @@ TOOL_FUNCS = {
     "cancel_appointment": booking.cancel_appointment,
     "reschedule_appointment": booking.reschedule_appointment,
     "get_business_info": booking.get_business_info,
+    "lookup_appointments": booking.lookup_appointments,
+    "lookup_customer": booking.lookup_customer,
     "escalate_to_human": booking.escalate_to_human,
 }
 
@@ -93,4 +95,10 @@ def _summarize(name: str, args: dict, result: dict) -> str:
         return f"rescheduled -> {result.get('summary')}" if result.get("success") else f"reschedule failed: {result.get('error')}"
     if name == "escalate_to_human":
         return f"escalated: {args.get('reason', '')}"
+    if name == "lookup_appointments":
+        if result.get("customer"):
+            return f"{result['customer']['name']}: {len(result.get('appointments', []))} active booking(s)"
+        return "no customer with that phone"
+    if name == "lookup_customer":
+        return f"found {result['customer']['name']}" if result.get("customer") else "no customer with that phone"
     return name
