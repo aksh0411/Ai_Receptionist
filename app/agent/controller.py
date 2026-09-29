@@ -20,6 +20,21 @@ class AgentError(Exception):
     """Raised for setup/API problems the user should see as a clear message."""
 
 
+def _tool_call_to_dict(tc) -> dict:
+    """Serialize a tool call, preserving provider extras (Gemini 3.x requires its
+    thought_signature — returned in extra_content — to be echoed back on replay)."""
+    out = {
+        "id": tc.id,
+        "type": tc.type or "function",
+        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+    }
+    extra = getattr(tc, "model_extra", None) or {}
+    for key in ("extra_content", "thought_signature"):
+        if key in extra and extra[key] is not None:
+            out[key] = extra[key]
+    return out
+
+
 class AgentController:
     def __init__(self, conversation_id: int | None = None, channel: str = "web_chat"):
         self.business = store.get_business()
@@ -80,20 +95,15 @@ class AgentController:
                 messages.append({"role": "assistant", "content": reply})
                 return reply, trace
 
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": message.content or "",
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-                        }
-                        for tc in message.tool_calls
-                    ],
-                }
-            )
+            assistant_msg = {
+                "role": "assistant",
+                "content": message.content or "",
+                "tool_calls": [_tool_call_to_dict(tc) for tc in message.tool_calls],
+            }
+            msg_extra = getattr(message, "model_extra", None) or {}
+            if msg_extra.get("thought_signature"):
+                assistant_msg["thought_signature"] = msg_extra["thought_signature"]
+            messages.append(assistant_msg)
             for tc in message.tool_calls:
                 result, summary = execute_tool(
                     tc.function.name, tc.function.arguments,
