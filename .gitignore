@@ -17,3 +17,4 @@ venv/
 
 # zcode session tooling
 .zcode/
+PROGRESS.md
