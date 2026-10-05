@@ -7,12 +7,11 @@ back tells the model whether something actually happened.
 
 import json
 
-from openai import OpenAI
-
 from app.agent.executor import execute_tool
+from app.agent.llm_client import make_client
 from app.agent.prompts import build_system_prompt
 from app.agent.tool_specs import TOOL_SPECS
-from app.config import AGENT_MAX_TOOL_ROUNDS, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+from app.config import AGENT_MAX_TOOL_ROUNDS, LLM_MODEL
 from app.db import json_store as store
 
 
@@ -28,6 +27,46 @@ CONFIRM_CUES = (
     "shall i proceed", "confirm this booking", "confirm the booking",
     "shall i confirm", "book kar", "confirm kar",
 )
+
+# Messages actually SENT to the model, beyond the system prompt. The full history
+# stays persisted; only what is sent is trimmed.
+CONTEXT_WINDOW_MESSAGES = 24
+
+
+def _trimmed_for_llm(messages: list[dict]) -> list[dict]:
+    """System prompt + the most recent messages that fit the budget.
+
+    Trims on tool-call GROUP boundaries: an assistant message with tool_calls and
+    its tool results are one unit and never split, so the provider never sees a
+    dangling half of a tool-call exchange.
+    """
+    if len(messages) <= CONTEXT_WINDOW_MESSAGES:
+        return list(messages)
+    head, body = messages[0], messages[1:]
+
+    units: list[list[dict]] = []
+    i = 0
+    while i < len(body):
+        m = body[i]
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            group = [m]
+            i += 1
+            while i < len(body) and body[i].get("role") == "tool":
+                group.append(body[i])
+                i += 1
+            units.append(group)
+        else:
+            units.append([m])
+            i += 1
+
+    kept: list[list[dict]] = []
+    budget = CONTEXT_WINDOW_MESSAGES - 1  # minus the system prompt
+    for unit in reversed(units):
+        if budget - len(unit) < 0 and kept:
+            break
+        kept.insert(0, unit)
+        budget -= len(unit)
+    return [head] + [m for unit in kept for m in unit]
 
 
 def _tool_call_to_dict(tc) -> dict:
@@ -55,7 +94,7 @@ class AgentController:
         if self.conversation is None:
             self.conversation = store.create_conversation(self.business["id"], channel)
 
-        self.client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL) if LLM_API_KEY else None
+        self.client = make_client()
 
     def handle_user_message(self, text: str) -> dict:
         messages = list(self.conversation["messages"] or [])
@@ -99,7 +138,7 @@ class AgentController:
             try:
                 response = self.client.chat.completions.create(
                     model=LLM_MODEL,
-                    messages=messages,
+                    messages=_trimmed_for_llm(messages),
                     tools=TOOL_SPECS,
                     tool_choice="auto",
                     temperature=0.4,
