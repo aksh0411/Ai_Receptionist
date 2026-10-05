@@ -12,14 +12,21 @@ a real database returns when the product goes multi-user.
 import json
 import os
 import secrets
+import shutil
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 DATA_FILE = Path(__file__).resolve().parents[2] / "data" / "clinic.json"
 
 _LOCK = threading.RLock()
 _STATE: dict | None = None
+
+# Conversation/tool-call logs are the future fine-tuning dataset — caps are generous
+# and env-overridable; export/archive before these limits ever matter.
+MAX_CONVERSATIONS = int(os.getenv("STORE_MAX_CONVERSATIONS", "500"))
+MAX_TOOL_CALLS = int(os.getenv("STORE_MAX_TOOL_CALLS", "2000"))
 
 DEFAULT_RULES = {
     "min_notice_minutes": 60,
@@ -86,6 +93,18 @@ def normalize_phone(raw: str) -> str:
     return digits[-10:] if len(digits) >= 10 else digits
 
 
+def clinic_now() -> datetime:
+    """Wall-clock time at the clinic (naive, in business.timezone). All slot math
+    and prompt anchors must use this instead of server-local datetime.now() so the
+    booking rules survive being deployed in another timezone."""
+    business = get_business()
+    tz_name = (business or {}).get("timezone") or "Asia/Kolkata"
+    try:
+        return datetime.now(ZoneInfo(tz_name)).replace(tzinfo=None)
+    except Exception:  # unknown tz database (e.g. tzdata missing) — degrade, don't crash
+        return datetime.now()
+
+
 def init() -> None:
     """Load the store; seed it from SEED_* constants if the file doesn't exist."""
     global _STATE
@@ -132,6 +151,9 @@ def _build_seed() -> dict:
 
 def _write() -> None:
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    backup = DATA_FILE.parent / (DATA_FILE.name + ".bak")
+    if DATA_FILE.exists():
+        shutil.copy2(DATA_FILE, backup)  # one-generation undo, refreshed on every write
     tmp = DATA_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(_STATE, indent=2, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, DATA_FILE)
@@ -237,6 +259,10 @@ def upsert_customer(business_id: int, name: str, phone: str) -> dict:
                 "created_at": _now_iso(),
             }
             _STATE["customers"].append(customer)
+        elif name.strip() and customer["name"] != name.strip():
+            # a later booking corrects the name on file (shared/family phones)
+            customer["name"] = name.strip()
+            _write()
         return customer
 
 
@@ -448,6 +474,10 @@ def create_conversation(business_id: int | None, channel: str) -> dict:
             "updated_at": _now_iso(),
         }
         _STATE["conversations"].append(conversation)
+        if len(_STATE["conversations"]) > MAX_CONVERSATIONS:
+            _STATE["conversations"] = sorted(
+                _STATE["conversations"], key=lambda c: c["id"]
+            )[-MAX_CONVERSATIONS:]
         _write()
         return conversation
 
@@ -482,4 +512,8 @@ def add_tool_call(
             "latency_ms": latency_ms,
             "created_at": _now_iso(),
         })
+        if len(_STATE["tool_calls"]) > MAX_TOOL_CALLS:
+            _STATE["tool_calls"] = sorted(
+                _STATE["tool_calls"], key=lambda t: t["id"]
+            )[-MAX_TOOL_CALLS:]
         _write()

@@ -7,7 +7,7 @@ from app.tools.booking import WEEKDAYS
 
 
 def build_system_prompt(business: dict, today: datetime | None = None) -> str:
-    today = today or datetime.now()
+    today = today or store.clinic_now()
     business_id = business["id"]
     rules = store.get_rules(business_id)
 

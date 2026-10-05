@@ -128,7 +128,7 @@ def check_availability(
     preferred_time: str | None = None,
     now: datetime | None = None,
 ) -> dict:
-    now = now or datetime.now()
+    now = now or store.clinic_now()
     try:
         d = date_cls.fromisoformat(date)
     except ValueError:
@@ -203,7 +203,7 @@ def book_appointment(
     customer_confirmed: bool = False,
     now: datetime | None = None,
 ) -> dict:
-    now = now or datetime.now()
+    now = now or store.clinic_now()
     try:
         d = date_cls.fromisoformat(date)
         start = datetime.combine(d, time_cls.fromisoformat(start_time))
@@ -309,7 +309,7 @@ def reschedule_appointment(
     new_time: str,
     now: datetime | None = None,
 ) -> dict:
-    now = now or datetime.now()
+    now = now or store.clinic_now()
     try:
         d = date_cls.fromisoformat(new_date)
         start = datetime.combine(d, time_cls.fromisoformat(new_time))
@@ -325,6 +325,8 @@ def reschedule_appointment(
     service = next(
         (s for s in store.get_services(business_id) if s["id"] == appointment["service_id"]), None
     )
+    if service is None:
+        return {"success": False, "error": "the service for this appointment is no longer offered — reschedule is not possible"}
     rules = store.get_rules(business_id)
     end = start + timedelta(minutes=service["duration_minutes"])
     if start < now + timedelta(minutes=rules["min_notice_minutes"]):
@@ -411,7 +413,7 @@ def lookup_appointments(business_id: int, phone: str) -> dict:
     return {
         "success": True,
         "customer": {"name": customer["name"], "phone": customer["phone"]},
-        "appointments": _appointment_cards(appointments, datetime.now()),
+        "appointments": _appointment_cards(appointments, store.clinic_now()),
         "message": (
             f"{len(appointments)} active appointment(s) for {customer['name']}."
             if appointments
@@ -443,7 +445,7 @@ def lookup_customer(business_id: int, phone: str) -> dict:
             "notes": customer["notes"],
             "first_seen": customer.get("created_at", "")[:10] or None,
         },
-        "appointments": _appointment_cards(appointments, datetime.now()),
+        "appointments": _appointment_cards(appointments, store.clinic_now()),
     }
 
 

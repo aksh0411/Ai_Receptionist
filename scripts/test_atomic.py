@@ -123,6 +123,33 @@ def main() -> None:
     refs = {a["booking_reference"] for a in appts}
     check("booking references unique", len(refs) == len(appts))
 
+    # 9. backup rotation: every write leaves a one-generation .bak beside the data file
+    bak = store.DATA_FILE.parent / (store.DATA_FILE.name + ".bak")
+    check("backup file created on write", bak.exists())
+
+    # 10. retention caps trim oldest-first
+    store.MAX_TOOL_CALLS = 5
+    for i in range(7):
+        store.add_tool_call(1, "check_availability", {}, {"success": True}, True, None, 1)
+    check("tool_calls capped", len(store._STATE["tool_calls"]) <= 5,
+          f"{len(store._STATE['tool_calls'])} kept of 7")
+    store.MAX_CONVERSATIONS = 3
+    for i in range(5):
+        store.create_conversation(1, "test")
+    check("conversations capped", len(store._STATE["conversations"]) <= 3,
+          f"{len(store._STATE['conversations'])} kept of 5")
+
+    # 11. name correction on phone reuse (shared/family phones)
+    c1 = store.upsert_customer(1, "Original Name", "9000011111")
+    c2 = store.upsert_customer(1, "Corrected Name", "+91 90000 11111")
+    check("name updated on phone reuse", c1["id"] == c2["id"] and c2["name"] == "Corrected Name",
+          f"id={c2['id']} name={c2['name']}")
+
+    # 12. clinic_now returns naive wall-clock time in the clinic's timezone
+    now = store.clinic_now()
+    check("clinic_now returns naive datetime", isinstance(now, datetime) and now.tzinfo is None,
+          str(now))
+
     print()
     if FAILURES:
         print(f"FAILED: {len(FAILURES)} test(s): {', '.join(FAILURES)}")
