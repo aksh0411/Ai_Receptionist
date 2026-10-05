@@ -12,6 +12,7 @@ Times: machine-facing values are 24h "HH:MM"; every human-facing list also carri
 a *_display twin in 12-hour AM/PM so the model never has to convert.
 """
 
+import secrets
 from datetime import date as date_cls, datetime, time as time_cls, timedelta
 
 from app.db import json_store as store
@@ -192,6 +193,91 @@ def check_availability(
 
 
 # ---------- booking ----------
+
+def propose_booking(
+    business_id: int,
+    conversation_id: int,
+    service_name: str,
+    date: str,
+    start_time: str,
+    customer_name: str,
+    customer_phone: str,
+    staff_name: str | None = None,
+    now: datetime | None = None,
+) -> dict:
+    """Present a booking offer. Commits NOTHING — this is the consent step.
+
+    Validates the request and stores a one-use server-issued confirmation token on
+    the conversation. The model shows the returned summary, asks for an explicit
+    yes, and only then calls book_appointment with the token. No booking can exist
+    that was never proposed: the token is issued here and validated by the executor.
+    """
+    now = now or store.clinic_now()
+    try:
+        d = date_cls.fromisoformat(date)
+        start = datetime.combine(d, time_cls.fromisoformat(start_time))
+    except ValueError:
+        return _date_anchor_error(date, now)
+
+    service = store.find_service(business_id, service_name)
+    if not service:
+        return {"success": False, "error": f"unknown service '{service_name}'"}
+
+    staff_list = store.get_staff_for_service(business_id, service["id"])
+    if staff_name:
+        wanted = staff_name.strip().lower()
+        staff_list = [s for s in staff_list if wanted in s["name"].lower()]
+    if not staff_list:
+        return {"success": False, "error": f"no staff member performs {service['name']}"}
+
+    rules = store.get_rules(business_id)
+    end = start + timedelta(minutes=service["duration_minutes"])
+    if start < now + timedelta(minutes=rules["min_notice_minutes"]):
+        return {"success": False, "error": "that start time violates the minimum-notice rule"}
+    if d > now.date() + timedelta(days=rules["max_advance_days"]):
+        return {"success": False, "error": "that date is beyond the booking window"}
+    windows = _hours_for_date(business_id, d)
+    if not any(
+        datetime.combine(d, time_cls.fromisoformat(w["opens_at"])) <= start
+        and end <= datetime.combine(d, time_cls.fromisoformat(w["closes_at"]))
+        for w in windows
+    ):
+        return {"success": False, "error": "requested time is outside opening hours"}
+
+    digits = normalize_phone(customer_phone)
+    if len(digits) < 10:
+        return {"success": False, "error": "customer_phone looks invalid — need a 10-digit number"}
+
+    conversation = store.get_conversation(conversation_id)
+    if conversation is None:
+        return {"success": False, "error": "invalid conversation"}
+    token = secrets.token_hex(8)
+    conversation["pending_offer"] = {
+        "token": token,
+        "turn": conversation.get("turn_count", 0),
+        "service_name": service["name"],
+        "date": d.isoformat(),
+        "start_time": start_time,
+        "customer_name": customer_name.strip(),
+        "customer_phone": digits,
+        "staff_name": staff_name,
+        "price_inr": service["price_inr"],
+    }
+    store.save_conversation(conversation)
+
+    return {
+        "success": True,
+        "summary_for_customer": (
+            f"{service['name']} on {d.isoformat()} at {start.strftime('%I:%M %p')}, "
+            f"Rs.{service['price_inr']} ({service['duration_minutes']} min)"
+        ),
+        "confirmation_token": token,
+        "instruction": (
+            "Present this summary to the customer and ask for an explicit yes. Call "
+            "book_appointment with this confirmation_token only AFTER they agree."
+        ),
+    }
+
 
 def book_appointment(
     business_id: int,

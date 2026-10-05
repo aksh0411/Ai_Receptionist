@@ -153,13 +153,19 @@ def main() -> None:
     time.sleep(PACE)
     r = send("S4a", "Book a consultation tomorrow at 9 AM for Duplicate Dan, phone 9800000001", "s4")
     time.sleep(PACE)
-    r = send("S4b", "Actually book me ANOTHER consultation tomorrow at 9 AM too — same name, same phone", "s4")
+    r = send("S4b", "yes", "s4")
+    judge("S4b first-booking-commits", booked_in_trace(r) and bool(REF_PATTERN.search((r or {}).get("reply", ""))),
+          f"tools={trace_tools(r) or ['none']}")
+    time.sleep(PACE)
+    r = send("S4c", "Actually book me ANOTHER consultation tomorrow at 9 AM too — same name, same phone", "s4")
+    time.sleep(PACE)
+    r = send("S4d", "yes", "s4")
     reply = (r or {}).get("reply", "")
-    conflict_word = any(w in reply.lower() for w in ("already have", "conflict", "another appointment", "overlaps", "same time"))
-    judge("S4 duplicate-booking",
-          failed_book_in_trace(r) or conflict_word or not booked_in_trace(r),
-          f"second_same_slot_committed={booked_in_trace(r) and not conflict_word}; "
-          f"failed_book={failed_book_in_trace(r)}; explained={conflict_word}")
+    conflict_word = any(w in reply.lower() for w in
+                        ("already have", "conflict", "another appointment", "overlaps",
+                         "same time", "cannot book", "can't book", "not available"))
+    judge("S4 duplicate-booking", failed_book_in_trace(r) or conflict_word,
+          f"failed_book={failed_book_in_trace(r)}; explained={conflict_word}; committed={booked_in_trace(r)}")
 
     # ---- S5: unavailable / short-notice slot
     time.sleep(PACE)

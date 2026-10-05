@@ -67,12 +67,13 @@ it hallucinated one, there would be no row in the store to back it up.
 Consequence: to change the clinic's hours or prices, edit `data/clinic.json` (while
 the server is stopped) — no prompt editing, no redeploy.
 
-## The 8 tools (`app/agent/tool_specs.py`)
+## The 9 tools (`app/agent/tool_specs.py`)
 
 | Tool | Purpose |
 |---|---|
 | `check_availability` | Open slots for a service on a date; returns alternatives when the requested time is taken. Must run before any booking talk. |
-| `book_appointment` | Create a booking; the returned `booking_reference` is the only proof it exists. |
+| `propose_booking` | Validate a requested booking and issue a one-use confirmation token. Commits nothing — this IS the consent step. |
+| `book_appointment` | Execute a previously proposed offer by `confirmation_token`; the returned `booking_reference` is the only proof it exists. |
 | `cancel_appointment` | Cancel by booking reference. |
 | `reschedule_appointment` | Move a booking to a new date/time by reference. |
 | `lookup_appointments` | Find a customer's active bookings by phone — for cancel/reschedule without a reference. |
@@ -97,9 +98,11 @@ in response to a real failure observed in live testing:
    list presented as everything.
 4. **Explicit confirmation before booking.** Collect service, date/time, name, and
    phone; summarize the full booking including price; get an explicit "yes" before
-   calling `book_appointment`. **Backend-enforced:** the executor refuses
-   `book_appointment` unless the previous turn's reply was a real confirmation ask
-   (summary + availability check + question) — the model cannot commit without it.
+   booking. **Backend-enforced via propose/confirm tokens:** the model must call
+   `propose_booking` (commits nothing, returns a summary + one-use token), show it,
+   and only `book_appointment(confirmation_token=…)` executes the stored offer —
+   with the offer's own values. No token, no booking; the model cannot commit
+   anything the backend never offered.
 5. **"Confirmed" only after a reference.** The word confirmed may only follow a
    successful `book_appointment` with a booking reference in hand.
 6. **Cancel/reschedule without a reference.** Ask for the phone number, call
@@ -124,9 +127,10 @@ Even if the model ignores the prompt, the backend holds these lines:
   and customer-overlap checks happen under the same lock as the write — two
   concurrent bookings cannot both win, and a customer cannot hold two overlapping
   active appointments.
-- **Consent gate** (`app/agent/executor.py`): `book_appointment` is refused unless
-  the controller flagged the previous turn as an explicit confirmation ask. One
-  booking per yes; the window is recomputed every turn so it cannot go stale.
+- **Consent gate** (`app/agent/executor.py`): `book_appointment` only executes a
+  stored offer matched by its server-issued one-use token (valid the turn it was
+  proposed or the next). The offer's service/date/time/customer override whatever
+  the model passes, and the token is consumed on success — one booking per yes.
 - **Double-booking guard** (`app/tools/booking.py`): the slot is re-validated
   against live store data immediately before save; one active booking per
   staff/slot. A race or a hallucinated time fails at the store, not in production.

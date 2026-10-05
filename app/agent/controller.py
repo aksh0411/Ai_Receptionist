@@ -19,15 +19,6 @@ class AgentError(Exception):
     """Raised for setup/API problems the user should see as a clear message."""
 
 
-# A reply counts as a confirmation ask when it poses a question using one of
-# these cues AND the same turn ran a successful availability check. Only then
-# may the NEXT turn call book_appointment (enforced in executor.py).
-CONFIRM_CUES = (
-    "shall i book", "should i book", "book this", "book it", "go ahead",
-    "shall i proceed", "confirm this booking", "confirm the booking",
-    "shall i confirm", "book kar", "confirm kar",
-)
-
 # Messages actually SENT to the model, beyond the system prompt. The full history
 # stays persisted; only what is sent is trimmed.
 CONTEXT_WINDOW_MESSAGES = 24
@@ -97,6 +88,9 @@ class AgentController:
         self.client = make_client()
 
     def handle_user_message(self, text: str) -> dict:
+        # Turn counter gives consent tokens their validity window (executor.py):
+        # an offer made this turn or the last may be booked; older ones cannot.
+        self.conversation["turn_count"] = self.conversation.get("turn_count", 0) + 1
         messages = list(self.conversation["messages"] or [])
         system_prompt = build_system_prompt(self.business)
         if messages and messages[0].get("role") == "system":
@@ -113,15 +107,6 @@ class AgentController:
                 reply, trace = self._run_loop(messages)
             except AgentError as e:
                 reply = f"Agent error: {e}"
-
-        # One-turn consent window (recomputed every turn, so it can't go stale):
-        # booking is permitted only in the turn following a real confirmation ask.
-        asked = (
-            "?" in reply
-            and any(cue in reply.lower() for cue in CONFIRM_CUES)
-            and any(t["tool"] == "check_availability" and t["ok"] for t in trace)
-        )
-        self.conversation["pending_booking"] = asked
 
         self.conversation["messages"] = messages
         store.save_conversation(self.conversation)

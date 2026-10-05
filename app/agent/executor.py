@@ -14,6 +14,7 @@ from app.tools import booking
 
 TOOL_FUNCS = {
     "check_availability": booking.check_availability,
+    "propose_booking": booking.propose_booking,
     "book_appointment": booking.book_appointment,
     "cancel_appointment": booking.cancel_appointment,
     "reschedule_appointment": booking.reschedule_appointment,
@@ -24,26 +25,51 @@ TOOL_FUNCS = {
 }
 
 CONSENT_ERROR = (
-    "consent required: present the full booking summary (service, date, time, price) "
-    "to the customer and ask for an explicit yes, then book only after they agree in "
-    "their next message. Do not book in the same turn you checked availability."
+    "no valid booking offer: call propose_booking with the service, date and time, "
+    "present the returned summary to the customer, and wait for an explicit yes. "
+    "Then call book_appointment with the confirmation_token propose_booking returned."
 )
 
 
-def _consent_on_file(conversation_id: int) -> bool:
-    """True when the controller flagged the previous turn's reply as a
-    confirmation ask (summary shown + availability checked + question posed)."""
+def _valid_offer(conversation_id: int, args: dict) -> dict | None:
+    """The conversation's pending offer, if args carry its unexpired token."""
     conversation = store.get_conversation(conversation_id)
-    return bool(conversation and conversation.get("pending_booking"))
+    offer = (conversation or {}).get("pending_offer")
+    if not offer:
+        return None
+    if (args or {}).get("confirmation_token") != offer.get("token"):
+        return None
+    if conversation.get("turn_count", 0) - offer.get("turn", 0) > 1:
+        return None  # offered too long ago — the model must propose again
+    return offer
 
 
-def _consume_consent(conversation_id: int) -> None:
-    """One booking per explicit yes — a second booking in the same turn needs
-    its own confirmation ask."""
+def _clear_offer(conversation_id: int) -> None:
+    """One booking per token."""
     conversation = store.get_conversation(conversation_id)
     if conversation:
-        conversation["pending_booking"] = False
+        conversation["pending_offer"] = None
         store.save_conversation(conversation)
+
+
+def _run_tool(func, kwargs: dict) -> dict:
+    try:
+        return func(**kwargs)
+    except TypeError as e:
+        return {"success": False, "error": f"bad arguments: {e}"}
+    except Exception as e:  # tool bugs must not kill the conversation
+        return {"success": False, "error": f"{type(e).__name__}: {e}"}
+
+
+def _context_kwargs(func, args: dict, business_id: int, conversation_id: int) -> dict:
+    """The model's arguments plus injected context keys. Context keys are injected
+    only into tools that declare them; the model's own arguments pass through."""
+    kwargs = dict(args)
+    params = inspect.signature(func).parameters
+    for key in ("business_id", "conversation_id"):
+        if key in params:
+            kwargs[key] = business_id if key == "business_id" else conversation_id
+    return kwargs
 
 
 def execute_tool(
@@ -65,27 +91,32 @@ def execute_tool(
         func = TOOL_FUNCS.get(name)
         if func is None:
             result = {"success": False, "error": f"unknown tool '{name}'"}
-        elif name == "book_appointment" and not _consent_on_file(conversation_id):
+        elif name == "book_appointment":
             # The model cannot commit a booking the customer never agreed to:
-            # consent is granted by the controller (previous turn asked + was answered)
-            # and enforced here, regardless of what the model claims.
-            result = {"success": False, "error": CONSENT_ERROR}
+            # book_appointment executes only a stored offer, only with the
+            # server-issued one-use token for it. The offer's values override
+            # whatever the model passes — the offer is the source of truth.
+            offer = _valid_offer(conversation_id, args)
+            if offer is None:
+                result = {"success": False, "error": CONSENT_ERROR}
+            else:
+                kwargs = {
+                    "service_name": offer["service_name"],
+                    "date": offer["date"],
+                    "start_time": offer["start_time"],
+                    "customer_name": offer["customer_name"],
+                    "customer_phone": offer["customer_phone"],
+                    "customer_confirmed": True,
+                }
+                if offer.get("staff_name"):
+                    kwargs["staff_name"] = offer["staff_name"]
+                kwargs = _context_kwargs(func, kwargs, business_id, conversation_id)
+                result = _run_tool(func, kwargs)
+                if result.get("success"):
+                    _clear_offer(conversation_id)
         else:
-            try:
-                # Context keys are injected only into tools that declare them;
-                # the model's own arguments are always passed through.
-                kwargs = dict(args)
-                params = inspect.signature(func).parameters
-                for key in ("business_id", "conversation_id"):
-                    if key in params:
-                        kwargs[key] = business_id if key == "business_id" else conversation_id
-                result = func(**kwargs)
-            except TypeError as e:
-                result = {"success": False, "error": f"bad arguments for {name}: {e}"}
-            except Exception as e:  # tool bugs must not kill the conversation
-                result = {"success": False, "error": f"{type(e).__name__}: {e}"}
-            if name == "book_appointment" and result.get("success"):
-                _consume_consent(conversation_id)
+            kwargs = _context_kwargs(func, args, business_id, conversation_id)
+            result = _run_tool(func, kwargs)
 
     ok = bool(result.get("success"))
     latency_ms = int((time.perf_counter() - started) * 1000)

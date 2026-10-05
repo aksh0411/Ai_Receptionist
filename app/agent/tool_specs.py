@@ -24,13 +24,12 @@ TOOL_SPECS = [
     {
         "type": "function",
         "function": {
-            "name": "book_appointment",
+            "name": "propose_booking",
             "description": (
-                "Book an appointment. Only call after the customer has SEEN the full "
-                "summary (service, date, time, price) and explicitly agreed to it. "
-                "Always run check_availability first. The returned booking_reference "
-                "is the only proof the booking exists. The backend rejects bookings "
-                "made without a prior confirmation ask."
+                "Present a booking offer to the customer. Validates the request and "
+                "returns a summary plus a one-use confirmation_token. Show the summary, "
+                "ask for an explicit yes, and only then call book_appointment with the "
+                "token. This commits NOTHING."
             ),
             "parameters": {
                 "type": "object",
@@ -41,12 +40,30 @@ TOOL_SPECS = [
                     "customer_name": {"type": "string"},
                     "customer_phone": {"type": "string"},
                     "staff_name": {"type": "string", "description": "optional, only if the customer asked"},
-                    "customer_confirmed": {
-                        "type": "boolean",
-                        "description": "true ONLY if the customer explicitly said yes to this exact booking in their last message",
+                },
+                "required": ["service_name", "date", "start_time", "customer_name", "customer_phone"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "book_appointment",
+            "description": (
+                "Book the appointment you previously proposed with propose_booking. "
+                "Only call AFTER the customer explicitly agreed to the exact summary. "
+                "Pass the confirmation_token propose_booking returned. The booking is "
+                "created from the stored offer — the token is the only proof of consent."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "confirmation_token": {
+                        "type": "string",
+                        "description": "the token returned by propose_booking for this exact booking",
                     },
                 },
-                "required": ["service_name", "date", "start_time", "customer_name", "customer_phone", "customer_confirmed"],
+                "required": ["confirmation_token"],
             },
         },
     },

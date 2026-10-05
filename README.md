@@ -16,7 +16,7 @@ app/
   config.py            # env-driven settings
   main.py              # FastAPI app (loads/seeds the JSON store on startup)
   db/json_store.py     # THE store: locked, atomic writes, seed definitions
-  tools/booking.py     # check_availability, book, cancel, reschedule, lookups, info, escalate
+  tools/booking.py     # check_availability, propose/confirm-token booking, cancel, reschedule, lookups, info, escalate
   agent/
     tool_specs.py      # tool schemas the model sees
     prompts.py         # system prompt built from live store data
