@@ -16,6 +16,7 @@ from datetime import date as date_cls, datetime, time as time_cls, timedelta
 
 from app.db import json_store as store
 from app.db.json_store import normalize_phone
+from app.notify import notify_escalation
 
 WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -480,6 +481,7 @@ def escalate_to_human(
     if conversation:
         conversation["escalated"] = True
         store.save_conversation(conversation)
+    notify_escalation(conversation_id, reason)  # log + optional webhook; never raises
     return {
         "success": True,
         "handoff": True,
