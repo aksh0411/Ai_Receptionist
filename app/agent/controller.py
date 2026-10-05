@@ -20,6 +20,16 @@ class AgentError(Exception):
     """Raised for setup/API problems the user should see as a clear message."""
 
 
+# A reply counts as a confirmation ask when it poses a question using one of
+# these cues AND the same turn ran a successful availability check. Only then
+# may the NEXT turn call book_appointment (enforced in executor.py).
+CONFIRM_CUES = (
+    "shall i book", "should i book", "book this", "book it", "go ahead",
+    "shall i proceed", "confirm this booking", "confirm the booking",
+    "shall i confirm", "book kar", "confirm kar",
+)
+
+
 def _tool_call_to_dict(tc) -> dict:
     """Serialize a tool call, preserving provider extras (Gemini 3.x requires its
     thought_signature — returned in extra_content — to be echoed back on replay)."""
@@ -64,6 +74,15 @@ class AgentController:
                 reply, trace = self._run_loop(messages)
             except AgentError as e:
                 reply = f"Agent error: {e}"
+
+        # One-turn consent window (recomputed every turn, so it can't go stale):
+        # booking is permitted only in the turn following a real confirmation ask.
+        asked = (
+            "?" in reply
+            and any(cue in reply.lower() for cue in CONFIRM_CUES)
+            and any(t["tool"] == "check_availability" and t["ok"] for t in trace)
+        )
+        self.conversation["pending_booking"] = asked
 
         self.conversation["messages"] = messages
         store.save_conversation(self.conversation)

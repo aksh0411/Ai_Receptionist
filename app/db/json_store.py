@@ -336,6 +336,7 @@ def try_book(
     end: datetime,
     candidate_staff_ids: list[int],
     service_buffers: dict[int, timedelta] | None = None,
+    extra_fields: dict | None = None,
     source: str = "ai_chat",
     now: datetime | None = None,
 ) -> dict:
@@ -379,6 +380,8 @@ def try_book(
             "booking_reference": reference,
             "created_at": now.isoformat(timespec="seconds"),
         }
+        if extra_fields:
+            appt.update(extra_fields)
         _STATE["appointments"].append(appt)
         _write()
         return {"ok": True, "appointment": appt}

@@ -97,7 +97,9 @@ in response to a real failure observed in live testing:
    list presented as everything.
 4. **Explicit confirmation before booking.** Collect service, date/time, name, and
    phone; summarize the full booking including price; get an explicit "yes" before
-   calling `book_appointment`.
+   calling `book_appointment`. **Backend-enforced:** the executor refuses
+   `book_appointment` unless the previous turn's reply was a real confirmation ask
+   (summary + availability check + question) — the model cannot commit without it.
 5. **"Confirmed" only after a reference.** The word confirmed may only follow a
    successful `book_appointment` with a booking reference in hand.
 6. **Cancel/reschedule without a reference.** Ask for the phone number, call
@@ -118,6 +120,13 @@ in response to a real failure observed in live testing:
 
 Even if the model ignores the prompt, the backend holds these lines:
 
+- **Atomic booking** (`json_store.try_book` / `try_reschedule`): staff availability
+  and customer-overlap checks happen under the same lock as the write — two
+  concurrent bookings cannot both win, and a customer cannot hold two overlapping
+  active appointments.
+- **Consent gate** (`app/agent/executor.py`): `book_appointment` is refused unless
+  the controller flagged the previous turn as an explicit confirmation ask. One
+  booking per yes; the window is recomputed every turn so it cannot go stale.
 - **Double-booking guard** (`app/tools/booking.py`): the slot is re-validated
   against live store data immediately before save; one active booking per
   staff/slot. A race or a hallucinated time fails at the store, not in production.

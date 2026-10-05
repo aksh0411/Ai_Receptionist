@@ -200,6 +200,7 @@ def book_appointment(
     customer_name: str,
     customer_phone: str,
     staff_name: str | None = None,
+    customer_confirmed: bool = False,
     now: datetime | None = None,
 ) -> dict:
     now = now or datetime.now()
@@ -254,6 +255,7 @@ def book_appointment(
         end=end,
         candidate_staff_ids=[s["id"] for s in staff_list],
         service_buffers=service_buffers,
+        extra_fields={"customer_confirmed": bool(customer_confirmed)},
         now=now,
     )
     if not result["ok"]:

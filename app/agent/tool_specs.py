@@ -26,10 +26,11 @@ TOOL_SPECS = [
         "function": {
             "name": "book_appointment",
             "description": (
-                "Book an appointment. Only call after the customer has confirmed the "
-                "service, date, time, and you have their name and phone number. Always "
-                "run check_availability first. The returned booking_reference is the "
-                "only proof the booking exists."
+                "Book an appointment. Only call after the customer has SEEN the full "
+                "summary (service, date, time, price) and explicitly agreed to it. "
+                "Always run check_availability first. The returned booking_reference "
+                "is the only proof the booking exists. The backend rejects bookings "
+                "made without a prior confirmation ask."
             ),
             "parameters": {
                 "type": "object",
@@ -40,8 +41,12 @@ TOOL_SPECS = [
                     "customer_name": {"type": "string"},
                     "customer_phone": {"type": "string"},
                     "staff_name": {"type": "string", "description": "optional, only if the customer asked"},
+                    "customer_confirmed": {
+                        "type": "boolean",
+                        "description": "true ONLY if the customer explicitly said yes to this exact booking in their last message",
+                    },
                 },
-                "required": ["service_name", "date", "start_time", "customer_name", "customer_phone"],
+                "required": ["service_name", "date", "start_time", "customer_name", "customer_phone", "customer_confirmed"],
             },
         },
     },

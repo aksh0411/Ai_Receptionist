@@ -23,6 +23,28 @@ TOOL_FUNCS = {
     "escalate_to_human": booking.escalate_to_human,
 }
 
+CONSENT_ERROR = (
+    "consent required: present the full booking summary (service, date, time, price) "
+    "to the customer and ask for an explicit yes, then book only after they agree in "
+    "their next message. Do not book in the same turn you checked availability."
+)
+
+
+def _consent_on_file(conversation_id: int) -> bool:
+    """True when the controller flagged the previous turn's reply as a
+    confirmation ask (summary shown + availability checked + question posed)."""
+    conversation = store.get_conversation(conversation_id)
+    return bool(conversation and conversation.get("pending_booking"))
+
+
+def _consume_consent(conversation_id: int) -> None:
+    """One booking per explicit yes — a second booking in the same turn needs
+    its own confirmation ask."""
+    conversation = store.get_conversation(conversation_id)
+    if conversation:
+        conversation["pending_booking"] = False
+        store.save_conversation(conversation)
+
 
 def execute_tool(
     name: str,
@@ -43,6 +65,11 @@ def execute_tool(
         func = TOOL_FUNCS.get(name)
         if func is None:
             result = {"success": False, "error": f"unknown tool '{name}'"}
+        elif name == "book_appointment" and not _consent_on_file(conversation_id):
+            # The model cannot commit a booking the customer never agreed to:
+            # consent is granted by the controller (previous turn asked + was answered)
+            # and enforced here, regardless of what the model claims.
+            result = {"success": False, "error": CONSENT_ERROR}
         else:
             try:
                 # Context keys are injected only into tools that declare them;
@@ -57,6 +84,8 @@ def execute_tool(
                 result = {"success": False, "error": f"bad arguments for {name}: {e}"}
             except Exception as e:  # tool bugs must not kill the conversation
                 result = {"success": False, "error": f"{type(e).__name__}: {e}"}
+            if name == "book_appointment" and result.get("success"):
+                _consume_consent(conversation_id)
 
     ok = bool(result.get("success"))
     latency_ms = int((time.perf_counter() - started) * 1000)
