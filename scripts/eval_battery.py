@@ -249,13 +249,30 @@ def main() -> None:
     # ---- summary
     print(f"\n{'=' * 60}", flush=True)
     print(f"BATTERY COMPLETE — refs created: {', '.join(ctx['refs']) or 'none'}", flush=True)
-    print(f"rate-limit retries needed: {ctx['retried']}\n{'=' * 60}", flush=True)
+    print(f"rate-limit retries needed: {ctx['retried']}", flush=True)
+
+    # ---- self-cleanup: cancel every booking the battery created, via /chat itself
+    # (out-of-process store edits would be clobbered by the running server's memory)
+    cleaned = 0
+    for i, ref in enumerate(ctx["refs"]):
+        try:
+            r = post("/chat", {"message": f"Cancel my booking with reference {ref}.", "conversation_id": None})
+            ok = any(t["tool"] == "cancel_appointment" and t["ok"] for t in (r.get("tool_trace") or []))
+            if ok:
+                cleaned += 1
+            print(f"cleanup {ref}: {'cancelled' if ok else r.get('reply', '')[:80]}", flush=True)
+        except Exception as e:
+            print(f"cleanup {ref}: FAILED ({e})", flush=True)
+        time.sleep(PACE)
+    print(f"cleanup: {cleaned}/{len(ctx['refs'])} booking(s) cancelled\n{'=' * 60}", flush=True)
+
     fails = 0
     for label, verdict, note in results:
         print(f"{verdict:5} {label:28} {note}", flush=True)
         if verdict == "FAIL":
             fails += 1
     print(f"\n{fails} FAIL(s)", flush=True)
+    sys.stdout = sys.__stdout__
     out.close()
     sys.exit(1 if fails else 0)
 
