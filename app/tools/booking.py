@@ -230,6 +230,8 @@ def book_appointment(
         return {"success": False, "error": "that date is beyond the booking window"}
 
     # Re-validate against live data right before writing — never trust the model's claim.
+    # Stateless checks (hours) here; stateful ones (staff busy, customer overlap)
+    # are re-checked atomically inside the store's lock by try_book.
     windows = _hours_for_date(business_id, d)
     if not any(
         datetime.combine(d, time_cls.fromisoformat(w["opens_at"])) <= start
@@ -237,36 +239,37 @@ def book_appointment(
         for w in windows
     ):
         return {"success": False, "error": "requested time is outside opening hours"}
-    service_buffers = {s["id"]: _service_buffer(s, rules) for s in store.get_services(business_id)}
-    occupied = _occupied_for_staff(business_id, [s["id"] for s in staff_list], d, service_buffers)
-    free = [s for s in staff_list
-            if all(start >= e or end <= st for st, e in occupied.get(s["id"], []))]
-    if not free:
-        return {
-            "success": False,
-            "error": "that slot is not available anymore",
-            "suggestion": "call check_availability again and offer alternatives",
-        }
 
     digits = normalize_phone(customer_phone)
     if len(digits) < 10:
         return {"success": False, "error": "customer_phone looks invalid — need a 10-digit number"}
     customer = store.upsert_customer(business_id, customer_name, digits)
 
-    business = store.get_business()
-    staff = free[0]
-    appointment = store.add_appointment({
-        "business_id": business_id,
-        "customer_id": customer["id"],
-        "staff_id": staff["id"],
-        "service_id": service["id"],
-        "start_at": start.isoformat(timespec="seconds"),
-        "end_at": end.isoformat(timespec="seconds"),
-        "status": "booked",
-        "source": "ai_chat",
-        "booking_reference": store.generate_booking_reference(business["slug"]),
-        "created_at": now.isoformat(timespec="seconds"),
-    })  # add_appointment saves — the save IS the booking
+    service_buffers = {s["id"]: _service_buffer(s, rules) for s in store.get_services(business_id)}
+    result = store.try_book(
+        business_id=business_id,
+        customer_id=customer["id"],
+        service_id=service["id"],
+        start=start,
+        end=end,
+        candidate_staff_ids=[s["id"] for s in staff_list],
+        service_buffers=service_buffers,
+        now=now,
+    )
+    if not result["ok"]:
+        if result["reason"] == "customer_busy":
+            return {
+                "success": False,
+                "error": "this customer already has an appointment that overlaps this time",
+                "suggestion": "call lookup_appointments to show their existing booking, or offer another time",
+            }
+        return {
+            "success": False,
+            "error": "that slot is not available anymore",
+            "suggestion": "call check_availability again and offer alternatives",
+        }
+    appointment = result["appointment"]
+    staff = store.get_staff_by_id(appointment["staff_id"])
 
     return {
         "success": True,
@@ -332,24 +335,31 @@ def reschedule_appointment(
         for w in windows
     ):
         return {"success": False, "error": "requested time is outside opening hours"}
+
+    # capture the old time BEFORE try_reschedule — get_appointment returns the
+    # live dict from the store, which the reschedule mutates in place
+    old = datetime.fromisoformat(appointment["start_at"]).strftime("%Y-%m-%d %H:%M")
     service_buffers = {s["id"]: _service_buffer(s, rules) for s in store.get_services(business_id)}
-    occupied = _occupied_for_staff(
-        business_id, [appointment["staff_id"]], d, service_buffers,
-        exclude_reference=appointment["booking_reference"],
+    result = store.try_reschedule(
+        appointment["booking_reference"],
+        new_start=start,
+        new_end=end,
+        service_buffers=service_buffers,
     )
-    if not all(start >= e or end <= st for st, e in occupied.get(appointment["staff_id"], [])):
+    if not result["ok"]:
+        if result["reason"] == "customer_busy":
+            return {
+                "success": False,
+                "error": "the customer already has another appointment overlapping this time",
+            }
+        if result["reason"] == "not_found":
+            return {"success": False, "error": "no appointment found with that booking reference"}
         return {
             "success": False,
             "error": "the new slot is not available for this staff member",
             "suggestion": "call check_availability and offer alternatives",
         }
 
-    old = datetime.fromisoformat(appointment["start_at"]).strftime("%Y-%m-%d %H:%M")
-    store.update_appointment(
-        appointment["booking_reference"],
-        start_at=start.isoformat(timespec="seconds"),
-        end_at=end.isoformat(timespec="seconds"),
-    )
     return {
         "success": True,
         "booking_reference": appointment["booking_reference"],

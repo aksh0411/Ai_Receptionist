@@ -13,7 +13,7 @@ import json
 import os
 import secrets
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 DATA_FILE = Path(__file__).resolve().parents[2] / "data" / "clinic.json"
@@ -285,6 +285,149 @@ def update_appointment(booking_reference: str, **fields) -> dict | None:
         appt.update(fields)
         _write()
         return appt
+
+
+# ---------- atomic booking operations ----------
+# Validation and mutation must happen under ONE lock acquisition: checking in
+# booking.py and writing here left a window where two concurrent bookings could
+# both pass. These are the only two ways appointment state changes.
+
+def _staff_free_locked(
+    business_id: int, staff_id: int, start: datetime, end: datetime,
+    service_buffers: dict[int, timedelta],
+) -> bool:
+    """Caller must hold _LOCK. Same overlap rule _compute_slots uses:
+    existing appointments padded by their service's buffer."""
+    for a in _STATE["appointments"]:
+        if a["status"] != "booked" or a["staff_id"] != staff_id or a["business_id"] != business_id:
+            continue
+        a_start = datetime.fromisoformat(a["start_at"])
+        if a_start.date() != start.date():
+            continue
+        a_end = datetime.fromisoformat(a["end_at"])
+        pad = service_buffers.get(a["service_id"], timedelta())
+        if start < a_end + pad and a_start - pad < end:
+            return False
+    return True
+
+
+def _customer_busy_locked(business_id: int, customer_id: int, start: datetime, end: datetime,
+                          exclude_reference: str | None = None) -> bool:
+    """Caller must hold _LOCK. True if the customer already holds an active
+    appointment overlapping this interval (raw times, no buffers)."""
+    for a in _STATE["appointments"]:
+        if a["booking_reference"] == exclude_reference:
+            continue
+        if (a["status"] != "booked" or a["customer_id"] != customer_id
+                or a["business_id"] != business_id):
+            continue
+        a_start = datetime.fromisoformat(a["start_at"])
+        a_end = datetime.fromisoformat(a["end_at"])
+        if start < a_end and a_start < end:
+            return True
+    return False
+
+
+def try_book(
+    business_id: int,
+    customer_id: int,
+    service_id: int,
+    start: datetime,
+    end: datetime,
+    candidate_staff_ids: list[int],
+    service_buffers: dict[int, timedelta] | None = None,
+    source: str = "ai_chat",
+    now: datetime | None = None,
+) -> dict:
+    """Atomic booking: re-validate staff availability and customer overlaps under
+    the store lock, then append + write. Returns
+    {"ok": True, "appointment": appt} or {"ok": False, "reason": "slot_taken" |
+    "customer_busy" | "reference_generation_failed"}."""
+    now = now or datetime.now()
+    buffers = service_buffers or {}
+    with _LOCK:
+        staff_id = next(
+            (sid for sid in candidate_staff_ids
+             if _staff_free_locked(business_id, sid, start, end, buffers)),
+            None,
+        )
+        if staff_id is None:
+            return {"ok": False, "reason": "slot_taken"}
+        if _customer_busy_locked(business_id, customer_id, start, end):
+            return {"ok": False, "reason": "customer_busy"}
+        business = _STATE["businesses"][0] if _STATE["businesses"] else None
+        slug = (business or {}).get("slug") or ""
+        prefix = "".join(w[0] for w in slug.split("-")[:2]).upper() or "BK"
+        reference = None
+        for _ in range(10):
+            candidate = f"{prefix}-{secrets.token_hex(2).upper()}"
+            if not booking_reference_taken(candidate):
+                reference = candidate
+                break
+        if reference is None:
+            return {"ok": False, "reason": "reference_generation_failed"}
+        appt = {
+            "id": _next_id(_STATE["appointments"]),
+            "business_id": business_id,
+            "customer_id": customer_id,
+            "staff_id": staff_id,
+            "service_id": service_id,
+            "start_at": start.isoformat(timespec="seconds"),
+            "end_at": end.isoformat(timespec="seconds"),
+            "status": "booked",
+            "source": source,
+            "booking_reference": reference,
+            "created_at": now.isoformat(timespec="seconds"),
+        }
+        _STATE["appointments"].append(appt)
+        _write()
+        return {"ok": True, "appointment": appt}
+
+
+def try_reschedule(
+    booking_reference: str,
+    new_start: datetime,
+    new_end: datetime,
+    service_buffers: dict[int, timedelta] | None = None,
+) -> dict:
+    """Atomic reschedule: re-validate the assigned staff's availability
+    (excluding the appointment being moved) and the customer's other
+    appointments under the store lock, then update + write. Returns
+    {"ok": True, "appointment": appt} or {"ok": False, "reason": ...}."""
+    buffers = service_buffers or {}
+    with _LOCK:
+        appt = get_appointment(booking_reference)
+        if appt is None or appt["status"] != "booked":
+            return {"ok": False, "reason": "not_found"}
+        if _references_overlap_locked(appt, new_start, new_end, buffers):
+            return {"ok": False, "reason": "slot_taken"}
+        if _customer_busy_locked(appt["business_id"], appt["customer_id"], new_start, new_end,
+                                 exclude_reference=booking_reference):
+            return {"ok": False, "reason": "customer_busy"}
+        appt["start_at"] = new_start.isoformat(timespec="seconds")
+        appt["end_at"] = new_end.isoformat(timespec="seconds")
+        _write()
+        return {"ok": True, "appointment": appt}
+
+
+def _references_overlap_locked(appt: dict, start: datetime, end: datetime,
+                               service_buffers: dict[int, timedelta]) -> bool:
+    """Whether any OTHER active appointment on the moved appointment's staff
+    overlaps the new interval (i.e. the slot is genuinely taken, not blocked
+    by the appointment's own old time)."""
+    for a in _STATE["appointments"]:
+        if a["booking_reference"] == appt["booking_reference"]:
+            continue
+        if a["status"] != "booked" or a["staff_id"] != appt["staff_id"]:
+            continue
+        a_start = datetime.fromisoformat(a["start_at"])
+        if a_start.date() != start.date():
+            continue
+        a_end = datetime.fromisoformat(a["end_at"])
+        pad = service_buffers.get(a["service_id"], timedelta())
+        if start < a_end + pad and a_start - pad < end:
+            return True
+    return False
 
 
 # ---------- conversations & tool logs ----------
