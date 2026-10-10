@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FrontDesk AI — Voice</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --text:#e8eaf0; --muted:#8b93a5; --accent:#5eead4; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 "Segoe UI", system-ui, sans-serif;
+         display:flex; justify-content:center; height:100vh; }
+  .wrap { width:min(560px,100%); display:flex; flex-direction:column; gap:14px; padding:24px; justify-content:center; }
+  h1 { font-size:18px; margin:0; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:22px; text-align:center; }
+  #status { color:var(--muted); font-size:13.5px; min-height:20px; }
+  #mic { background:var(--accent); color:#06281f; border:0; border-radius:10px; padding:12px 26px;
+         font:inherit; font-weight:600; cursor:pointer; margin-top:14px; }
+  #mic.off { background:none; border:1px solid var(--line); color:var(--muted); }
+  .hint { color:var(--muted); font-size:12px; text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>FrontDesk AI — Voice</h1>
+  <div class="card">
+    <div id="status">Not connected</div>
+    <button id="mic" class="off">Start talking</button>
+  </div>
+  <div class="hint">Your mic joins a LiveKit room; the receptionist answers out loud.<br>
+  Same brain as the chat — bookings, confirmations, and escalation included.</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.min.js"></script>
+<script>
+  const status = document.getElementById("status");
+  const micBtn = document.getElementById("mic");
+  let room = null;
+
+  micBtn.addEventListener("click", async () => {
+    if (room) { await room.disconnect(); room = null; micBtn.textContent = "Start talking";
+      micBtn.classList.add("off"); status.textContent = "Disconnected"; return; }
+    status.textContent = "Connecting…";
+    try {
+      const res = await fetch("/voice/token?identity=guest-" + Math.random().toString(36).slice(2, 8));
+      const data = await res.json();
+      if (data.error) { status.textContent = data.error; return; }
+      room = new LivekitClient.Room({ adaptiveStream: true, dynacast: true });
+      room.on("connected", () => status.textContent = "Connected — speak when ready");
+      room.on("disconnected", () => { status.textContent = "Not connected"; micBtn.textContent = "Start talking"; micBtn.classList.add("off"); });
+      await room.connect(data.url, data.token);
+      await room.localParticipant.setMicrophoneEnabled(true);
+      micBtn.textContent = "Stop";
+      micBtn.classList.remove("off");
+    } catch (e) {
+      status.textContent = "Connection failed: " + e.message;
+      room = null;
+    }
+  });
+</script>
+</body>
+</html>

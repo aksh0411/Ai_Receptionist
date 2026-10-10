@@ -3,3 +3,10 @@ uvicorn[standard]>=0.30
 openai>=1.60
 python-dotenv>=1.0
 tzdata>=2024.1
+# voice channel (see VOICE.md) — only needed for run_voice.bat
+livekit-agents>=1.0
+livekit-plugins-deepgram>=1.0
+livekit-plugins-openai>=1.0
+livekit-plugins-silero>=1.0
+livekit-plugins-edge>=1.0
+livekit-api>=1.0
