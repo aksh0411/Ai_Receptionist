@@ -23,12 +23,22 @@ def page():
 
 @router.get("/token")
 def token(room: str = "receptionist", identity: str = "guest"):
-    """Short-lived LiveKit access token for the browser mic."""
+    """Short-lived LiveKit access token for the browser mic.
+
+    The token carries an agent-dispatch config so joining the room automatically
+    starts the named "receptionist" worker job."""
     if not (LIVEKIT_URL and LIVEKIT_API_KEY and LIVEKIT_API_SECRET):
         return {"error": "voice not configured: set LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET in .env"}
     from livekit.api import AccessToken, VideoGrants
+    from livekit.protocol.agent_dispatch import RoomAgentDispatch
+    from livekit.protocol.room import RoomConfiguration
 
-    access = AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET).with_identity(identity).with_grants(
-        VideoGrants(room_join=True, room=room)
+    access = (
+        AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+        .with_identity(identity)
+        .with_grants(VideoGrants(room_join=True, room=room))
+        .with_room_config(
+            RoomConfiguration(agents=[RoomAgentDispatch(agent_name="receptionist")])
+        )
     )
     return {"url": LIVEKIT_URL, "token": access.to_jwt()}
