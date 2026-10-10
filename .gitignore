@@ -18,3 +18,4 @@ venv/
 # zcode session tooling
 .zcode/
 PROGRESS.md
+training/dataset_policy-*.jsonl
