@@ -19,3 +19,4 @@ venv/
 .zcode/
 PROGRESS.md
 training/dataset_policy-*.jsonl
+scripts/eval_battery_output.txt
