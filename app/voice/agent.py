@@ -15,8 +15,12 @@ Run (after .env has LIVEKIT_* keys and DEEPGRAM_API_KEY or GROQ_API_KEY):
 
 import asyncio
 import logging
+import sys
 import time
 import uuid
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # run as a script: make `app` importable
 
 from livekit import agents
 from livekit.agents import AgentSession, RoomInputOptions, cli, WorkerOptions
